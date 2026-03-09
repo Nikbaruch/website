@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOISE LADDER</title>
+
+<!--
+╔══════════════════════════════════════════════════════════════╗
+║  NOISE LADDER — Ground to Space Journey                      ║
+╠══════════════════════════════════════════════════════════════╣
+║  NARRATIVE (p = scroll progress 0→1)                        ║
+║                                                              ║
+║  p 0.00 → 0.15  GROUND LEVEL                                ║
+║    • Blue sky, warm ground, Hollywood letters anchored       ║
+║    • Character sitting at the base of the ladder            ║
+║    • "Start to climb to explore" hint                       ║
+║                                                              ║
+║  p 0.15 → 0.40  LOW ALTITUDE                                ║
+║    • Sky deepens, horizon visible                            ║
+║    • RELEASES flies in from left                            ║
+║    • Clouds pass from right                                  ║
+║                                                              ║
+║  p 0.40 → 0.65  HIGH ALTITUDE                               ║
+║    • Sky turns deep blue/purple                              ║
+║    • LIVE block flies in from right                          ║
+║    • Ground letters shrink into distance below               ║
+║                                                              ║
+║  p 0.65 → 0.85  STRATOSPHERE                                ║
+║    • Near black, stars appear                                ║
+║    • ABOUT drifts in from left                              ║
+║                                                              ║
+║  p 0.85 → 1.00  SPACE                                       ║
+║    • Full black, stars dense, nebula glow                    ║
+║    • CONTACT arrives from right                              ║
+║                                                              ║
+╠══════════════════════════════════════════════════════════════╣
+║  PNG ASSET SLOTS (all clearly marked with ► in comments)    ║
+║                                                              ║
+║  assets/ladder-tile.png   repeating vertical tile           ║
+║  assets/ground.png        ground strip, repeat-x            ║
+║  assets/char-sit.png      character sitting                  ║
+║  assets/char-walk-1..4.png  4 climb frames                  ║
+║  assets/letter-N..R.png   Hollywood 3D letters              ║
+╚══════════════════════════════════════════════════════════════╝
+-->
+
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap" rel="stylesheet">
+
+<style>
+
+/* ══════════════════════════════════════
+   VARIABLES
+══════════════════════════════════════ */
+:root {
+  --ground-h:  130px;
+  --ladder-w:  240px;
+  --ladder-tile-h: 200px; /* match your PNG tile height */
+  --letter-h:  150px;
+  --char-w:    80px;
+  --char-h:    120px;
+
+  --red:    #ff1a1a;
+  --orange: #ff6600;
+  --fg:     #ede9e0;
+}
+
+/* ══════════════════════════════════════
+   BASE
+══════════════════════════════════════ */
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  width: 100%; overflow-x: hidden;
+  background: #060606;
+  color: var(--fg);
+  font-family: 'Share Tech Mono', monospace;
+  cursor: none;
+}
+
+/* ══════════════════════════════════════
+   CURSOR
+══════════════════════════════════════ */
+#cursor {
+  position: fixed; pointer-events: none; z-index: 9999;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--fg); transform: translate(-50%,-50%);
+  mix-blend-mode: difference;
+}
+
+/* ══════════════════════════════════════
+   PROGRESS
+══════════════════════════════════════ */
+#progress {
+  position: fixed; top:0; left:0;
+  height: 2px; width: 0%;
+  background: var(--red);
+  z-index: 1000;
+  box-shadow: 0 0 6px var(--red);
+  transition: width .06s linear;
+}
+
+/* ══════════════════════════════════════
+   SCROLLER (scroll height only)
+══════════════════════════════════════ */
+#scroller {
+  height: 800vh;
+  position: relative;
+  z-index: 0; /* behind scene visually, but body scroll still works */
+}
+
+/* ══════════════════════════════════════
+   SCENE (fixed)
+══════════════════════════════════════ */
+#scene {
+  position: fixed; inset: 0;
+  width: 100vw; height: 100vh;
+  overflow: hidden; z-index: 1;
+  pointer-events: none; /* scene never blocks scroll events */
+}
+
+/* Re-enable pointer events only on interactive children */
+#scene .block,
+#scene #hint,
+#scene #character,
+#scene .ext-link {
+  pointer-events: auto;
+}
+
+/* ══════════════════════════════════════
+   SKY CANVAS
+   Gradient shifts from day → dusk →
+   deep blue → space black as p grows.
+   Drawn in JS.
+══════════════════════════════════════ */
+#sky-canvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+}
+
+/* ══════════════════════════════════════
+   STARS CANVAS
+   Fades in after p=0.50
+══════════════════════════════════════ */
+#stars-canvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.8s ease;
+}
+
+/* Scanlines */
+#scene::before {
+  content: ''; position: absolute; inset: 0;
+  background: repeating-linear-gradient(
+    to bottom, transparent 0, transparent 2px,
+    rgba(0,0,0,0.12) 2px, rgba(0,0,0,0.12) 3px
+  );
+  pointer-events: none; z-index: 95;
+  animation: scanflicker .15s steps(1) infinite;
+}
+
+/* ══════════════════════════════════════
+   CLOUDS (pass from right to left)
+   3 cloud layers at different depths
+   Visible p=0.05 → p=0.45, parallax speed
+══════════════════════════════════════ */
+.cloud-layer {
+  position: absolute;
+  left: 0; right: 0;
+  height: 100px;
+  z-index: 5;
+  pointer-events: none;
+  /* translateX controlled by JS */
+}
+#cloud-1 { top: 20%; }
+#cloud-2 { top: 35%; }
+#cloud-3 { top: 15%; }
+
+.cloud {
+  position: absolute;
+  border-radius: 50px;
+  background: rgba(255,255,255,0.55);
+  filter: blur(6px);
+}
+
+/* ══════════════════════════════════════
+   HORIZON LINE
+   Fades out as we leave atmosphere
+══════════════════════════════════════ */
+#horizon {
+  position: absolute;
+  bottom: var(--ground-h);
+  left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(
+    to right, transparent, rgba(255,220,150,0.3) 30%, rgba(255,220,150,0.3) 70%, transparent
+  );
+  z-index: 8;
+  transition: opacity 0.5s;
+}
+
+/* ══════════════════════════════════════
+   GROUND
+   ► ASSET: assets/ground.png
+══════════════════════════════════════ */
+#ground {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: var(--ground-h);
+  z-index: 20;
+
+  /* ► Replace with: url('assets/ground.png') repeat-x bottom / auto 100% */
+  background: linear-gradient(to top, #1a1510 0%, #0f0c08 55%, transparent 100%);
+  border-top: 1px solid rgba(255,200,100,0.08);
+}
+#ground::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(to right,
+    transparent, rgba(255,200,80,0.25) 25%,
+    rgba(255,200,80,0.25) 75%, transparent);
+}
+
+/* ══════════════════════════════════════
+   LADDER — FIXED, never moves
+   ► ASSET: assets/ladder-tile.png
+══════════════════════════════════════ */
+#ladder {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 50%; transform: translateX(-50%);
+  width: var(--ladder-w);
+  z-index: 15;
+
+  /* Repeating tile — background-position-y animated by JS for climbing feel */
+  background: url('assets/ladder-tile.png') repeat-y top center / 100% auto;
+}
+
+/* The bottom piece — start of the ladder resting on the ground.
+   Positioned in the scene (not inside #ladder) so it can
+   slide down with the ground as we climb. */
+#ground-mask {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: var(--ladder-w);
+  /* hauteur = assez grande pour couvrir le bas de l'échelle */
+  height: 150px;
+  width: 100%;
+  /* même couleur que le sol — ajuste cette couleur pour matcher ton ground.png */
+  background: #12c459;
+  z-index: 22; /* devant l'échelle */
+  pointer-events: none;
+  /* bottom suit le sol — JS le fait descendre avec l'animation */
+  bottom: 0;
+}
+
+/* ══════════════════════════════════════
+   HOLLYWOOD LETTERS
+   Anchored to ground — perspective baked in.
+   Shrink/fade as we climb away from them.
+══════════════════════════════════════ */
+#title-row {
+  position: absolute;
+  bottom: var(--ground-h);
+  left: 0; right: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 25;
+  /* JS handles scale + opacity as we climb away */
+  transform-origin: bottom center;
+}
+
+.word {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+#title-gap { width: var(--ladder-w); flex-shrink: 0; }
+
+.letter-ph {
+  display: flex; align-items: flex-end; justify-content: center;
+  height: var(--letter-h); width: 58px;
+  padding-bottom: 2px;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: 5rem; line-height: 1;
+  color: #ede9e0;
+  transform-origin: bottom center;
+  transform: perspective(400px) rotateX(10deg);
+  text-shadow:
+    3px 3px 0 #444,  6px 6px 0 #333,
+    9px 9px 0 #222, 12px 12px 0 #111,
+    0 0 40px rgba(255,200,50,0.12);
+  user-select: none;
+}
+
+/*
+  ► When PNG assets are ready, replace .letter-ph with:
+  <img class="letter" src="assets/letter-N.png" alt="N">
+
+  .letter {
+    height: var(--letter-h); width: auto;
+    object-fit: contain; object-position: bottom;
+    transform: perspective(400px) rotateX(10deg);
+    transform-origin: bottom center;
+    filter: drop-shadow(0 8px 0 rgba(0,0,0,0.9));
+  }
+*/
+
+/* ══════════════════════════════════════
+   CHARACTER
+   top: set by JS (climbs from bottom to top)
+══════════════════════════════════════ */
+#character {
+  position: absolute;
+  /* horizontally: slightly right of ladder center */
+  left: calc(50% + var(--ladder-w) / 2 + 4px);
+  width: var(--char-w);
+  height: var(--char-h);
+  z-index: 30;
+  /* top set by JS */
+}
+
+.char-frame {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: contain; object-position: bottom;
+  display: none;
+}
+.char-frame.active { display: block; }
+
+/* placeholder */
+#char-placeholder {
+  width: 100%; height: 100%;
+  display: flex; align-items: flex-end; justify-content: center;
+  font-size: 3rem;
+  filter: drop-shadow(0 4px 10px rgba(255,200,50,0.4));
+}
+
+/* ══════════════════════════════════════
+   HINT
+══════════════════════════════════════ */
+#hint {
+  position: absolute;
+  bottom: calc(var(--ground-h) + 20px);
+  left: 50%; transform: translateX(-50%);
+  z-index: 60;
+  display: flex; flex-direction: column;
+  align-items: center; gap: 8px;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+#hint-line {
+  width: 1px; height: 42px;
+  background: linear-gradient(to top, rgba(237,233,224,0.35), transparent);
+  animation: hint-line-pulse 1.8s ease-in-out infinite;
+}
+#hint-arrow {
+  font-size: 1rem; line-height: 1;
+  color: rgba(237,233,224,0.5);
+  animation: hint-bounce 1.2s ease-in-out infinite;
+}
+#hint-label {
+  font-size: 0.6rem; letter-spacing: 0.36em;
+  text-transform: uppercase;
+  color: rgba(237,233,224,0.4);
+  white-space: nowrap;
+}
+
+/* ══════════════════════════════════════
+   CONTENT BLOCKS
+   Each flies in from a side, flies out
+   the other side when we pass it.
+
+   JS sets --tx (translateX) per block.
+   Opacity also controlled by JS.
+══════════════════════════════════════ */
+.block {
+  position: absolute;
+  pointer-events: none;
+  /* transform + opacity driven purely by JS */
+  will-change: transform, opacity;
+}
+.block.active { pointer-events: auto; }
+
+/* ── RELEASES — left side (p 0.18 → 0.48) ── */
+#blk-releases {
+  top: 10vh;
+  left: 4vw;
+  width: min(36vw, 360px);
+}
+
+/* ── LIVE — right side (p 0.38 → 0.68) ── */
+#blk-live {
+  top: 10vh;
+  right: 4vw;
+  width: min(33vw, 320px);
+  text-align: right;
+}
+
+/* ── ABOUT — left side (p 0.62 → 0.88) ── */
+#blk-about {
+  top: 50%;
+  left: 4vw;
+  transform: translateY(-50%);  /* vertical center only, JS handles X */
+  width: min(38vw, 380px);
+}
+
+/* ── CONTACT — right side (p 0.80 → 1.00) ── */
+#blk-contact {
+  top: 8vh;
+  right: 4vw;
+  width: min(38vw, 380px);
+  text-align: right;
+}
+
+/* ══════════════════════════════════════
+   BLOCK INNER STYLES
+══════════════════════════════════════ */
+.sec-label {
+  font-size: 0.56rem; letter-spacing: 0.34em;
+  color: var(--red); text-transform: uppercase;
+  margin-bottom: 0.65rem; opacity: 0.85;
+}
+.sec-title {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(1.6rem, 3vw, 2.8rem);
+  letter-spacing: 0.04em; line-height: 1;
+  margin-bottom: 1rem;
+}
+
+/* Release list */
+.rel-list { display: flex; flex-direction: column; gap: 1px; }
+.rel-item {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.55rem 0.8rem;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid rgba(255,255,255,0.06);
+  cursor: none;
+  transition: background .2s;
+}
+.rel-item:hover { background: rgba(255,26,26,0.05); }
+.rel-num  { font-size:.52rem; color:#2a2a2a; width:18px; flex-shrink:0; }
+.rel-name { font-family:'Bebas Neue',sans-serif; font-size:.9rem; flex:1; }
+.rel-meta { font-size:.52rem; color:#2a2a2a; margin-top:.1rem; }
+.rel-year { font-family:'Bebas Neue',sans-serif; font-size:1rem; color:rgba(255,26,26,.2); }
+
+/* Stats */
+.stat-list { display:flex; flex-direction:column; gap:.9rem; margin-top:1rem; }
+.stat-num   { font-family:'Bebas Neue',sans-serif; font-size:2.8rem; line-height:1; color:var(--orange); }
+.stat-label { font-size:.52rem; letter-spacing:.18em; color:#2a2a2a; text-transform:uppercase; }
+
+.freq-bars {
+  display:flex; align-items:flex-end; justify-content:flex-end;
+  gap:3px; height:36px; margin-top:1rem;
+}
+.freq-bar {
+  width:3px; background:var(--red); border-radius:2px 2px 0 0;
+  opacity:.55; animation:freq-anim var(--d) ease-in-out infinite alternate;
+}
+
+/* About */
+.about-copy {
+  font-size:.76rem; line-height:2;
+  color:rgba(237,233,224,0.4);
+}
+.about-copy strong { color:rgba(255,26,26,.8); font-weight:normal; }
+
+/* Contact */
+.contact-title {
+  font-family:'Bebas Neue',sans-serif;
+  font-size:clamp(2rem,5vw,4rem);
+  letter-spacing:-.01em; line-height:.9;
+  margin-bottom:1.2rem;
+}
+.contact-title em { color:var(--red); font-style:normal; }
+
+.link-grid {
+  display:flex; flex-wrap:wrap; justify-content:flex-end;
+  gap:1.5px; margin-top:.8rem;
+}
+.ext-link {
+  padding:.48rem .9rem;
+  background:rgba(255,255,255,.02);
+  border:1px solid rgba(255,255,255,.06);
+  color:rgba(237,233,224,.4);
+  font-family:'Share Tech Mono',monospace;
+  font-size:.58rem; letter-spacing:.12em;
+  text-transform:uppercase; text-decoration:none;
+  cursor:none;
+  transition:background .2s, color .2s, border-color .2s;
+}
+.ext-link:hover { background:var(--red); color:#fff; border-color:var(--red); }
+.contact-mail {
+  margin-top:1rem; font-size:.6rem;
+  letter-spacing:.08em; color:rgba(237,233,224,.14);
+}
+
+/* ══════════════════════════════════════
+   ALTITUDE LABEL (subtle, top center)
+   Shows current "altitude" as p grows
+══════════════════════════════════════ */
+#altitude {
+  position: absolute;
+  top: 2.5vh; left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.56rem; letter-spacing: 0.3em;
+  color: rgba(237,233,224,0.2);
+  text-transform: uppercase;
+  z-index: 70; pointer-events: none;
+  transition: opacity 0.5s;
+  white-space: nowrap;
+}
+
+/* ══════════════════════════════════════
+   ANIMATIONS
+══════════════════════════════════════ */
+@keyframes scanflicker {
+  0%,91%,94%,99%,100%{opacity:1} 92%,93%{opacity:.5} 97%,98%{opacity:.75}
+}
+@keyframes hint-bounce {
+  0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)}
+}
+@keyframes hint-line-pulse {
+  0%{transform:scaleY(0);transform-origin:bottom}
+  50%{transform:scaleY(1)}
+  100%{transform:scaleY(0);transform-origin:top}
+}
+@keyframes freq-anim {
+  from{height:10%} to{height:100%}
+}
+
+/* ══════════════════════════════════════
+   RESPONSIVE
+══════════════════════════════════════ */
+@media(max-width:720px){
+  :root{ --ground-h:80px; --ladder-w:140px; --letter-h:90px; --char-w:56px; --char-h:84px; }
+  #blk-releases,#blk-about{ left:4vw; right:auto; width:88vw; }
+  #blk-live{ display:none; }
+  #blk-contact{ right:4vw; width:88vw; }
+}
+
+</style>
+</head>
+<body>
+
+<div id="cursor"></div>
+<div id="progress"></div>
+<div id="scroller"></div>
+
+<div id="scene">
+
+  <!-- Sky (animated gradient canvas) -->
+  <canvas id="sky-canvas"></canvas>
+
+  <!-- Stars (fade in from stratosphere) -->
+  <canvas id="stars-canvas"></canvas>
+
+  <!-- Clouds -->
+  <div class="cloud-layer" id="cloud-1">
+    <div class="cloud" style="left:15%;top:20px;width:180px;height:45px;opacity:.6;"></div>
+    <div class="cloud" style="left:60%;top:10px;width:120px;height:35px;opacity:.4;"></div>
+  </div>
+  <div class="cloud-layer" id="cloud-2">
+    <div class="cloud" style="left:35%;top:15px;width:220px;height:50px;opacity:.45;"></div>
+    <div class="cloud" style="left:75%;top:5px;width:150px;height:40px;opacity:.35;"></div>
+  </div>
+  <div class="cloud-layer" id="cloud-3">
+    <div class="cloud" style="left:5%;top:30px;width:100px;height:30px;opacity:.3;"></div>
+    <div class="cloud" style="left:50%;top:20px;width:200px;height:55px;opacity:.5;"></div>
+    <div class="cloud" style="left:82%;top:8px;width:130px;height:38px;opacity:.38;"></div>
+  </div>
+
+  <!-- Horizon -->
+  <div id="horizon"></div>
+
+  <!-- Ladder (fixed) -->
+  <!-- Ladder repeating tile (animated by JS) -->
+  <div id="ladder"></div>
+
+  <!-- Ground mask: colored band in front of ladder bottom, slides down with ground -->
+  <div id="ground-mask"></div>
+
+  <!-- Ground -->
+  <div id="ground"></div>
+
+  <!-- Title: NOISE [ladder] LADDER -->
+  <div id="title-row">
+    <div class="word" id="word-noise">
+      <!-- ► Replace with <img class="letter" src="assets/letter-N.png"> etc. -->
+      <span class="letter-ph">N</span>
+      <span class="letter-ph">O</span>
+      <span class="letter-ph">I</span>
+      <span class="letter-ph">S</span>
+      <span class="letter-ph">E</span>
+    </div>
+    <div id="title-gap"></div>
+    <div class="word" id="word-ladder">
+      <span class="letter-ph">L</span>
+      <span class="letter-ph">A</span>
+      <span class="letter-ph">D</span>
+      <span class="letter-ph">D</span>
+      <span class="letter-ph">E</span>
+      <span class="letter-ph">R</span>
+    </div>
+  </div>
+
+  <!-- Character -->
+  <div id="character">
+    <!-- ► Replace divs with <img class="char-frame active" src="assets/char-sit.png"> etc. -->
+    <div id="char-sit" class="char-frame active">
+      <div id="char-placeholder">🧍</div>
+    </div>
+    <div id="char-walk-1" class="char-frame">
+      <div style="width:100%;height:100%;display:flex;align-items:flex-end;justify-content:center;font-size:3rem;">🧗</div>
+    </div>
+    <div id="char-walk-2" class="char-frame">
+      <div style="width:100%;height:100%;display:flex;align-items:flex-end;justify-content:center;font-size:2.9rem;">🧗</div>
+    </div>
+    <div id="char-walk-3" class="char-frame">
+      <div style="width:100%;height:100%;display:flex;align-items:flex-end;justify-content:center;font-size:3rem;">🧗</div>
+    </div>
+    <div id="char-walk-4" class="char-frame">
+      <div style="width:100%;height:100%;display:flex;align-items:flex-end;justify-content:center;font-size:2.9rem;">🧗</div>
+    </div>
+  </div>
+
+  <!-- Hint -->
+  <div id="hint">
+    <div id="hint-line"></div>
+    <div id="hint-arrow">↑</div>
+    <div id="hint-label">Start to climb to explore</div>
+  </div>
+
+  <!-- Altitude label -->
+  <div id="altitude">Ground level</div>
+
+  <!-- ── CONTENT BLOCKS ── -->
+
+  <!-- RELEASES (flies in from LEFT, exits to RIGHT) -->
+  <div class="block" id="blk-releases">
+    <div class="sec-label">// Discography</div>
+    <div class="sec-title">RELEASES</div>
+    <div class="rel-list">
+      <div class="rel-item"><div class="rel-num">001</div><div style="flex:1"><div class="rel-name">MACHINE HATRED</div><div class="rel-meta">EP · 4 tracks · Self-Released · 2023</div></div><div class="rel-year">23</div></div>
+      <div class="rel-item"><div class="rel-num">002</div><div style="flex:1"><div class="rel-name">WHITE NOISE RITUAL</div><div class="rel-meta">LP · 8 tracks · Brutal Dept. · 2023</div></div><div class="rel-year">23</div></div>
+      <div class="rel-item"><div class="rel-num">003</div><div style="flex:1"><div class="rel-name">FEEDBVCK</div><div class="rel-meta">Single · Distortion Rec. · 2024</div></div><div class="rel-year">24</div></div>
+      <div class="rel-item"><div class="rel-num">004</div><div style="flex:1"><div class="rel-name">SYSTEM COLLAPSE</div><div class="rel-meta">EP · 6 tracks · Self-Released · 2024</div></div><div class="rel-year">24</div></div>
+      <div class="rel-item"><div class="rel-num">005</div><div style="flex:1"><div class="rel-name">ÜBERMENSCH RAVE</div><div class="rel-meta">LP · 10 tracks · Brutal Dept. · 2025</div></div><div class="rel-year">25</div></div>
+    </div>
+  </div>
+
+  <!-- LIVE (flies in from RIGHT, exits to LEFT) -->
+  <div class="block" id="blk-live">
+    <div class="sec-label">// Live</div>
+    <div class="sec-title">LIVE<br>MACHINE</div>
+    <div class="stat-list">
+      <div><div class="stat-num">200+</div><div class="stat-label">avg BPM</div></div>
+      <div><div class="stat-num">50+</div><div class="stat-label">shows played</div></div>
+      <div><div class="stat-num">∞</div><div class="stat-label">decibels</div></div>
+    </div>
+    <div class="freq-bars" id="freq-bars"></div>
+  </div>
+
+  <!-- ABOUT (flies in from LEFT, exits to RIGHT) -->
+  <div class="block" id="blk-about">
+    <div class="sec-label">// About</div>
+    <div class="sec-title">WHO IS<br>NOISE LADDER</div>
+    <p class="about-copy">
+      Solo project born in the bowels of the <strong>European underground</strong>.
+      Noise Ladder makes music that doesn't ask for permission —
+      <strong>hardcore tekno</strong>, industrial noise, total distortion.
+      Every performance is an act of <strong>sonic resistance</strong>.
+    </p>
+  </div>
+
+  <!-- CONTACT (flies in from RIGHT, stays) -->
+  <div class="block" id="blk-contact">
+    <div class="sec-label">// Contact · Booking</div>
+    <div class="contact-title">BOOK<br><em>NOISE</em><br>LADDER</div>
+    <div class="link-grid">
+      <a href="#" class="ext-link">Bandcamp</a>
+      <a href="#" class="ext-link">Soundcloud</a>
+      <a href="#" class="ext-link">Instagram</a>
+      <a href="#" class="ext-link">Booking</a>
+      <a href="#" class="ext-link">Resident Advisor</a>
+    </div>
+    <div class="contact-mail"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="294746405a4c0445484d4d4c5b69595b465d464707444c">[email&#160;protected]</a></div>
+  </div>
+
+</div><!-- /scene -->
+
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+'use strict';
+
+// ══════════════════════════════════════════════
+// CURSOR
+// ══════════════════════════════════════════════
+const $cursor = document.getElementById('cursor');
+document.addEventListener('mousemove', e => {
+  $cursor.style.left = e.clientX + 'px';
+  $cursor.style.top  = e.clientY + 'px';
+});
+
+// ══════════════════════════════════════════════
+// SKY CANVAS
+// Interpolates between altitude zones
+// ══════════════════════════════════════════════
+const skyCanvas = document.getElementById('sky-canvas');
+const skyCtx    = skyCanvas.getContext('2d');
+
+// Sky palette at each altitude zone (p value)
+// Each entry: [p, topColor, bottomColor]
+const SKY_ZONES = [
+  // p=0.00 : daylight blue sky, warm ground glow
+  [0.00, '#1a3a6e', '#87CEEB', '#c8a97a'],
+  // p=0.20 : late afternoon, golden
+  [0.20, '#0f2040', '#4a7fc1', '#d4935a'],
+  // p=0.40 : dusk, orange horizon
+  [0.40, '#080d20', '#1a2a50', '#7a3a1a'],
+  // p=0.60 : high altitude, dark blue
+  [0.60, '#030810', '#080d20', '#1a1a3a'],
+  // p=0.80 : stratosphere edge
+  [0.80, '#010305', '#030810', '#06060f'],
+  // p=1.00 : deep space black
+  [1.00, '#000000', '#010305', '#020208'],
+];
+
+function lerpColor(a, b, t) {
+  // a, b = '#rrggbb' strings, t = 0..1
+  const ai = parseInt(a.slice(1), 16);
+  const bi = parseInt(b.slice(1), 16);
+  const ar = (ai >> 16) & 0xff, ag = (ai >> 8) & 0xff, ab = ai & 0xff;
+  const br = (bi >> 16) & 0xff, bg = (bi >> 8) & 0xff, bb = bi & 0xff;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bv= Math.round(ab + (bb - ab) * t);
+  return `rgb(${r},${g},${bv})`;
+}
+
+function getSkyColors(p) {
+  // Find surrounding zones
+  let z0 = SKY_ZONES[0], z1 = SKY_ZONES[1];
+  for (let i = 0; i < SKY_ZONES.length - 1; i++) {
+    if (p >= SKY_ZONES[i][0] && p <= SKY_ZONES[i+1][0]) {
+      z0 = SKY_ZONES[i]; z1 = SKY_ZONES[i+1]; break;
+    }
+  }
+  const t = (p - z0[0]) / (z1[0] - z0[0] || 1);
+  return {
+    top:    lerpColor(z0[1], z1[1], t),
+    mid:    lerpColor(z0[2], z1[2], t),
+    bottom: lerpColor(z0[3], z1[3], t),
+  };
+}
+
+function drawSky(p) {
+  const W = skyCanvas.width  = window.innerWidth;
+  const H = skyCanvas.height = window.innerHeight;
+  const c = getSkyColors(p);
+
+  const grad = skyCtx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0,   c.top);
+  grad.addColorStop(0.5, c.mid);
+  grad.addColorStop(1,   c.bottom);
+  skyCtx.fillStyle = grad;
+  skyCtx.fillRect(0, 0, W, H);
+
+  // Sun / glow near horizon (visible at low altitude)
+  if (p < 0.5) {
+    const sunOpacity = Math.max(0, (0.5 - p) / 0.5) * 0.6;
+    const groundH = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ground-h')) || 130;
+    const sunY = H - groundH - 20;
+    const sunGrad = skyCtx.createRadialGradient(W/2, sunY, 0, W/2, sunY, W*0.3);
+    sunGrad.addColorStop(0, `rgba(255,210,80,${sunOpacity * 0.5})`);
+    sunGrad.addColorStop(0.4, `rgba(255,150,30,${sunOpacity * 0.3})`);
+    sunGrad.addColorStop(1, 'transparent');
+    skyCtx.fillStyle = sunGrad;
+    skyCtx.fillRect(0, 0, W, H);
+  }
+}
+
+// ══════════════════════════════════════════════
+// STARS CANVAS
+// ══════════════════════════════════════════════
+const starsCanvas = document.getElementById('stars-canvas');
+const starsCtx    = starsCanvas.getContext('2d');
+let   starsBuilt  = false;
+
+function buildStars() {
+  const W = starsCanvas.width  = window.innerWidth;
+  const H = starsCanvas.height = window.innerHeight;
+  starsCtx.clearRect(0, 0, W, H);
+
+  const count = Math.floor((W * H) / 1200);
+  for (let i = 0; i < count; i++) {
+    const x = Math.random() * W;
+    const y = Math.random() * H * 0.85; // mostly upper portion
+    const r = Math.random() * 1.4 + 0.3;
+    const brightness = 0.4 + Math.random() * 0.6;
+
+    starsCtx.beginPath();
+    starsCtx.arc(x, y, r, 0, Math.PI * 2);
+    starsCtx.fillStyle = `rgba(255,255,255,${brightness})`;
+    starsCtx.fill();
+  }
+  starsBuilt = true;
+}
+
+function updateStars(p) {
+  // Stars fade in from p=0.45 onward
+  const opacity = Math.max(0, Math.min(1, (p - 0.45) / 0.25));
+  starsCanvas.style.opacity = opacity.toString();
+
+  if (!starsBuilt && p > 0.3) buildStars();
+}
+
+// ══════════════════════════════════════════════
+// CLOUDS — parallax drift
+// p: 0 → clouds fully visible
+// p: 0.45 → clouds fully gone
+// Each layer moves at different speed
+// ══════════════════════════════════════════════
+function updateClouds(p) {
+  const opacity = Math.max(0, 1 - p / 0.45);
+
+  // Layers drift at different X speeds
+  const speeds = [0.15, 0.22, 0.10]; // fraction of vw per unit of p
+  ['cloud-1','cloud-2','cloud-3'].forEach((id, i) => {
+    const el = document.getElementById(id);
+    const tx = -p * speeds[i] * window.innerWidth;
+    el.style.transform = `translateX(${tx}px)`;
+    el.style.opacity = opacity.toString();
+  });
+}
+
+// ══════════════════════════════════════════════
+// ALTITUDE LABEL
+// ══════════════════════════════════════════════
+const ALT_LABELS = [
+  [0,    'Ground level'],
+  [0.12, 'Low altitude'],
+  [0.30, 'Clouds'],
+  [0.50, 'High altitude'],
+  [0.65, 'Stratosphere'],
+  [0.80, 'Near space'],
+  [0.92, 'Deep space'],
+];
+
+function updateAltitude(p) {
+  const el = document.getElementById('altitude');
+  let label = ALT_LABELS[0][1];
+  for (const [threshold, text] of ALT_LABELS) {
+    if (p >= threshold) label = text;
+  }
+  el.textContent = label;
+  // Hide at very start and near end
+  el.style.opacity = (p < 0.05 || p > 0.97) ? '0' : '1';
+}
+
+// ══════════════════════════════════════════════
+// HOLLYWOOD LETTERS
+// Shrink + fade as we climb away from ground
+// ══════════════════════════════════════════════
+function updateTitleRow(p) {
+  const el = document.getElementById('title-row');
+  // Letters stay full size and pass below the screen as we climb.
+  // p=0 → on screen (translateY=0)
+  // p=0.25 → fully below viewport (translateY = 100vh-ish)
+  const progress = Math.min(1, p / 0.25);
+  const ty = progress * (window.innerHeight * 1.1); // slides down off screen
+  el.style.transform = `translateY(${ty}px)`;
+  el.style.opacity   = '1'; // always full opacity — they just go below
+}
+
+// ══════════════════════════════════════════════
+// CHARACTER
+// ══════════════════════════════════════════════
+const WALK_FRAMES = ['char-walk-1','char-walk-2','char-walk-3','char-walk-4'];
+let walkFrame = 0, walkTimer = null, charState = 'sit';
+
+function setCharState(state) {
+  if (charState === state) return;
+  charState = state;
+  if (state === 'sit') {
+    clearInterval(walkTimer); walkTimer = null;
+    document.getElementById('char-sit').classList.add('active');
+    WALK_FRAMES.forEach(id => document.getElementById(id).classList.remove('active'));
+  } else {
+    document.getElementById('char-sit').classList.remove('active');
+    if (!walkTimer) {
+      walkTimer = setInterval(() => {
+        document.getElementById(WALK_FRAMES[walkFrame]).classList.remove('active');
+        walkFrame = (walkFrame + 1) % 4;
+        document.getElementById(WALK_FRAMES[walkFrame]).classList.add('active');
+      }, 180);
+    }
+  }
+}
+
+let CHAR_Y_START = 0, CHAR_Y_END = 0;
+
+function measureLayout() {
+  const vh = window.innerHeight;
+  const groundH = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--ground-h')) || 130;
+  const charH   = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--char-h'))   || 120;
+  CHAR_Y_START = vh - groundH - charH - 8;
+  CHAR_Y_END   = Math.round(vh * 0.06);
+}
+
+function updateCharacter(p) {
+  const charY = CHAR_Y_START + (CHAR_Y_END - CHAR_Y_START) * p;
+  document.getElementById('character').style.top = charY + 'px';
+  setCharState(p >= 0.02 ? 'climb' : 'sit');
+}
+
+// ══════════════════════════════════════════════
+// CONTENT BLOCKS — fly in / fly out
+//
+// Each block has:
+//   pIn   : p at which it starts flying in
+//   pPeak : p at which it's fully visible
+//   pFade : p at which it starts flying out
+//   pOut  : p at which it's fully gone
+//   dirIn : 'left' | 'right'  (side it enters from)
+//   (exits from the opposite side)
+//
+// translateX: 0 = on screen, positive = right, negative = left
+// ══════════════════════════════════════════════
+const BLOCKS = [
+  {
+    id:     'blk-releases',
+    pIn:    0.14, pPeak: 0.22, pFade: 0.42, pOut: 0.52,
+    dirIn:  'left',   // enters from left
+    // exits to right (dirOut = opposite)
+  },
+  {
+    id:     'blk-live',
+    pIn:    0.34, pPeak: 0.42, pFade: 0.58, pOut: 0.68,
+    dirIn:  'right',
+  },
+  {
+    id:     'blk-about',
+    pIn:    0.60, pPeak: 0.68, pFade: 0.82, pOut: 0.90,
+    dirIn:  'left',
+  },
+  {
+    id:     'blk-contact',
+    pIn:    0.78, pPeak: 0.86, pFade: 999,  pOut: 999,  // stays to the end
+    dirIn:  'right',
+  },
+];
+
+// Ease functions
+function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+function easeIn(t)  { return Math.pow(t, 3); }
+
+function updateBlocks(p) {
+  const vw = window.innerWidth;
+
+  BLOCKS.forEach(({ id, pIn, pPeak, pFade, pOut, dirIn }) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    const offscreen = vw * 1.1; // how far off screen when hidden
+
+    let tx      = 0;  // translateX
+    let opacity = 0;
+
+    if (p < pIn) {
+      // Not yet arrived — waiting off screen on entry side
+      tx      = dirIn === 'left' ? -offscreen : offscreen;
+      opacity = 0;
+
+    } else if (p >= pIn && p <= pPeak) {
+      // Flying IN
+      const t = easeOut((p - pIn) / (pPeak - pIn));
+      const startX = dirIn === 'left' ? -offscreen : offscreen;
+      tx      = startX * (1 - t);
+      opacity = t;
+
+    } else if (p > pPeak && p < pFade) {
+      // Fully on screen — visible
+      tx      = 0;
+      opacity = 1;
+
+    } else if (p >= pFade && p <= pOut) {
+      // Flying OUT — exits opposite side from entry
+      const t = easeIn((p - pFade) / (pOut - pFade));
+      const exitX = dirIn === 'left' ? offscreen : -offscreen; // exits opposite
+      tx      = exitX * t;
+      opacity = 1 - t;
+
+    } else {
+      // Fully gone
+      tx      = dirIn === 'left' ? offscreen : -offscreen;
+      opacity = 0;
+    }
+
+    el.style.transform  = `translateX(${tx}px)`;
+    el.style.opacity    = opacity.toString();
+    el.classList.toggle('active', opacity > 0.05);
+  });
+}
+
+// ══════════════════════════════════════════════
+// FREQUENCY BARS
+// ══════════════════════════════════════════════
+function buildFreqBars() {
+  const c = document.getElementById('freq-bars');
+  for (let i = 0; i < 20; i++) {
+    const b = document.createElement('div');
+    b.className = 'freq-bar';
+    b.style.cssText = `--d:${(0.1+Math.random()*0.35).toFixed(2)}s;animation-delay:${(Math.random()*0.2).toFixed(2)}s;`;
+    c.appendChild(b);
+  }
+}
+
+// ══════════════════════════════════════════════
+// MAIN SCROLL HANDLER
+// ══════════════════════════════════════════════
+const $progress = document.getElementById('progress');
+const $hint     = document.getElementById('hint');
+
+// ══════════════════════════════════════════════
+// LADDER SCROLL ANIMATION
+// Moves background-position-y downward as p grows
+// giving the illusion that the ladder is passing
+// beneath the climber (we are going UP).
+//
+// TUNE: change TILE_H to match the pixel height
+// of your ladder-tile.png for perfect tiling.
+// ══════════════════════════════════════════════
+const $ladder  = document.getElementById('ladder');
+const TILE_H   = 200; // px — must match your PNG tile height
+const SCROLL_MULTIPLIER = 8; // higher = faster tile scroll, more intense sensation
+
+function updateLadder(p) {
+  // Scroll the repeating tile downward = climbing sensation
+  const totalScroll = TILE_H * SCROLL_MULTIPLIER;
+  $ladder.style.backgroundPositionY = (p * totalScroll) + 'px';
+
+  // Ground mask slides down at SAME speed as title-row (p / 0.25)
+  // so it looks like the soil is pulling away beneath us
+  const progress = Math.min(1, p / 0.25);
+  const ty = progress * (window.innerHeight * 1.1);
+  const mask = document.getElementById('ground-mask');
+  if (mask) mask.style.transform = `translateX(-50%) translateY(${ty}px)`;
+}
+
+function onScroll() {
+  const maxSc = document.getElementById('scroller').offsetHeight - window.innerHeight;
+  if (maxSc <= 0) return;
+
+  // p=0 bottom, p=1 top
+  const p = Math.max(0, Math.min(1, 1 - window.scrollY / maxSc));
+
+  $progress.style.width = (p * 100) + '%';
+
+  // Hint: fade out by p=0.08
+  $hint.style.opacity = Math.max(0, 1 - p / 0.08).toString();
+
+  drawSky(p);
+  updateStars(p);
+  updateClouds(p);
+  updateAltitude(p);
+  updateTitleRow(p);
+  updateCharacter(p);
+  updateLadder(p);
+  updateBlocks(p);
+}
+
+// ══════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════
+function init() {
+  measureLayout();
+  buildFreqBars();
+
+  // initial character position
+  document.getElementById('character').style.top = CHAR_Y_START + 'px';
+
+  // initial sky
+  drawSky(0);
+
+  // start at BOTTOM of page
+  const maxSc = document.getElementById('scroller').offsetHeight - window.innerHeight;
+  window.scrollTo({ top: maxSc, behavior: 'instant' });
+
+  setTimeout(onScroll, 60);
+}
+
+window.addEventListener('scroll', onScroll, { passive: true });
+window.addEventListener('resize', () => {
+  measureLayout();
+  buildStars();
+  onScroll();
+});
+window.addEventListener('load', init);
+</script>
+</body>
+</html>
